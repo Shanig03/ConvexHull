@@ -1,5 +1,4 @@
-#include "reactor.hpp"
-#include "convex_hull.hpp"
+#include "reactor.hpp" 
 #include <iostream>
 #include <vector>
 #include <string>
@@ -12,46 +11,121 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <cstring>
-#include <signal.h>
+#include <fcntl.h>
 #include <map>
+#include <sys/select.h>
 
 #define PORT 9034
-#define MAXCLIENTS 10
 #define BUFSIZE 1024
+
+// Point class
+class Point {
+public:
+    double x, y;
+    
+    Point(double x = 0, double y = 0) : x(x), y(y) {}
+    
+    bool operator<(const Point& other) const {
+        if (x != other.x) return x < other.x;
+        return y < other.y;
+    }
+    
+    bool operator==(const Point& other) const {
+        return std::abs(x - other.x) < 1e-9 && std::abs(y - other.y) < 1e-9;
+    }
+};
+
+// Function pointer typedef
+typedef void* (*reactorFunc)(int fd);
+
 
 // Global variables
 std::vector<Point> globalGraph;
 int counter = 0;
-void* globalReactor = nullptr;
-int globalServerSocket = -1;
-std::map<int, std::string> clientBuffers; // Store partial messages per client
+std::map<int, bool> clientSockets;
+int serverSocket;
+reactor* globalReactor = nullptr; 
 
-// Signal handler for graceful shutdown
-void signalHandler(int signum) {
-    std::cout << "\nReceived signal " << signum << ", shutting down server..." << std::endl;
-    
-    if (globalReactor) {
-        stopReactor(globalReactor);
-        globalReactor = nullptr;
-    }
-    
-    if (globalServerSocket != -1) {
-        close(globalServerSocket);
-        globalServerSocket = -1;
-    }
-    
-    exit(0);
-}
-
-// Forward declarations
-void* handleServerSocket(int serverFd);
-void* handleClientSocket(int clientFd);
-void* handleServerInput(int stdinFd);
+// Function prototypes
+void* handleNewConnection(int fd);
+void* handleClientData(int fd);
+void* handleServerInput(int fd);
+std::string processCommand(const std::string& command);
+void sendToClient(int clientSocket, const std::string& message);
+Point parsePoint(const std::string& pointStr);
+double polygonArea(const std::vector<Point>& vertices);
+std::vector<Point> convexHull(std::vector<Point> points);
+double crossProduct(const Point& O, const Point& A, const Point& B);
 
 // Send message to a specific client
 void sendToClient(int clientSocket, const std::string& message) {
     std::string msg = message + "\n";
     send(clientSocket, msg.c_str(), msg.length(), 0);
+}
+
+// Parse point from string "x,y"
+Point parsePoint(const std::string& pointStr) {
+    size_t commaPos = pointStr.find(',');
+    if (commaPos != std::string::npos) {
+        double x = std::stod(pointStr.substr(0, commaPos));
+        double y = std::stod(pointStr.substr(commaPos + 1));
+        return Point(x, y);
+    }
+    return Point(0, 0);
+}
+
+// Cross product of vectors OA and OB
+double crossProduct(const Point& O, const Point& A, const Point& B) {
+    return (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x);
+}
+
+// Calculate convex hull using Andrew's monotone chain algorithm
+std::vector<Point> convexHull(std::vector<Point> points) {
+    int n = points.size();
+    if (n <= 1) return points;
+    
+    // Sort points lexicographically
+    std::sort(points.begin(), points.end());
+    
+    // Build lower hull
+    std::vector<Point> hull;
+    for (int i = 0; i < n; i++) {
+        while (hull.size() >= 2 && 
+               crossProduct(hull[hull.size()-2], hull[hull.size()-1], points[i]) <= 0) {
+            hull.pop_back();
+        }
+        hull.push_back(points[i]);
+    }
+    
+    // Build upper hull
+    size_t t = hull.size() + 1;
+    for (int i = n - 2; i >= 0; i--) {
+        while (hull.size() >= t && 
+               crossProduct(hull[hull.size()-2], hull[hull.size()-1], points[i]) <= 0) {
+            hull.pop_back();
+        }
+        hull.push_back(points[i]);
+    }
+    
+    // Remove the last point because it's the same as the first
+    hull.pop_back();
+    
+    return hull;
+}
+
+// Calculate area of polygon using shoelace formula
+double polygonArea(const std::vector<Point>& vertices) {
+    int n = vertices.size();
+    if (n < 3) return 0.0;
+    
+    double area = 0.0;
+    for (int i = 0; i < n; i++) {
+        int j = (i + 1) % n;
+        area += vertices[i].x * vertices[j].y;
+        area -= vertices[j].x * vertices[i].y;
+    }
+    
+    return std::abs(area) / 2.0;
 }
 
 // Process command from a client and return response
@@ -128,222 +202,194 @@ std::string processCommand(const std::string& command) {
     }
 }
 
-// Callback function for handling server socket (new connections)
-void* handleServerSocket(int serverFd) {
+// Handle new client connections
+void* handleNewConnection(int fd) {
     struct sockaddr_in clientAddr;
     socklen_t clientLen = sizeof(clientAddr);
     
-    int newSocket = accept(serverFd, (struct sockaddr*)&clientAddr, &clientLen);
+    int newSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
     if (newSocket < 0) {
         perror("Accept failed");
         return nullptr;
     }
     
     std::cout << "New connection from " << inet_ntoa(clientAddr.sin_addr) 
-              << ":" << ntohs(clientAddr.sin_port) 
-              << " (fd: " << newSocket << ")" << std::endl;
-    
-    // Add the new client socket to the reactor
-    if (addFdToReactor(globalReactor, newSocket, handleClientSocket) != 0) {
-        std::cout << "Failed to add client socket to reactor" << std::endl;
-        close(newSocket);
-        return nullptr;
-    }
-    
-    // Initialize client buffer
-    clientBuffers[newSocket] = "";
+              << ":" << ntohs(clientAddr.sin_port) << " (fd: " << newSocket << ")" << std::endl;
     
     // Send welcome message
     sendToClient(newSocket, "Commands: Newgraph <n>, <x,y>, CH, Newpoint <x,y>, Removepoint <x,y>, Status");
     
-    std::cout << "Added client to reactor (fd: " << newSocket << ")" << std::endl;
+    // Add new client socket to reactor
+     if (globalReactor->addFd(newSocket, handleClientData) == 0) {
+        clientSockets[newSocket] = true;
+        std::cout << "Client added to reactor (fd: " << newSocket << ")" << std::endl;
+    } else {
+        std::cout << "Failed to add client to reactor" << std::endl;
+        close(newSocket);
+    }
     
     return nullptr;
 }
 
-// Callback function for handling client sockets (data from clients)
-void* handleClientSocket(int clientFd) {
+// Handle client data
+void* handleClientData(int fd) {
     char buffer[BUFSIZE];
-    int valread = read(clientFd, buffer, BUFSIZE - 1);
+    int valread = read(fd, buffer, BUFSIZE - 1);
     
     if (valread <= 0) {
         // Client disconnected
-        std::cout << "Client disconnected (fd: " << clientFd << ")" << std::endl;
-        removeFdFromReactor(globalReactor, clientFd);
-        clientBuffers.erase(clientFd);
-        close(clientFd);
+        struct sockaddr_in clientAddr;
+        socklen_t clientLen = sizeof(clientAddr);
+        getpeername(fd, (struct sockaddr*)&clientAddr, &clientLen);
+        std::cout << "Client disconnected (fd: " << fd << ")" << std::endl;
+        
+        // Remove from reactor and close socket
+        globalReactor->removeFd(fd);        
+        clientSockets.erase(fd);
+        close(fd);
+        
         return nullptr;
     }
     
+    // Process received command
     buffer[valread] = '\0';
     
-    // Add received data to client's buffer
-    clientBuffers[clientFd] += std::string(buffer);
-    
-    // Process complete lines
-    std::string& clientBuffer = clientBuffers[clientFd];
-    size_t pos;
-    
-    while ((pos = clientBuffer.find('\n')) != std::string::npos) {
-        std::string command = clientBuffer.substr(0, pos);
-        clientBuffer.erase(0, pos + 1);
-        
-        // Remove carriage return if present
-        if (!command.empty() && command.back() == '\r') {
-            command.pop_back();
-        }
-        
-        if (!command.empty()) {
-            std::cout << "Received command from client (fd: " << clientFd << "): " << command << std::endl;
-            
-            // Process command and get response
-            std::string response = processCommand(command);
-            
-            // Send response back to client
-            sendToClient(clientFd, response);
-            
-            std::cout << "Sent response to client (fd: " << clientFd << "): " << response << std::endl;
-        }
+    // Remove newline if present
+    std::string command(buffer);
+    if (!command.empty() && command.back() == '\n') {
+        command.pop_back();
     }
+    if (!command.empty() && command.back() == '\r') {
+        command.pop_back();
+    }
+    
+    std::cout << "Received command from fd " << fd << ": " << command << std::endl;
+    
+    // Process command and get response
+    std::string response = processCommand(command);
+    
+    // Send response back to client
+    sendToClient(fd, response);
+    
+    std::cout << "Sent response to fd " << fd << ": " << response << std::endl;
     
     return nullptr;
 }
 
-// Callback function for handling stdin (server console input)
-void* handleServerInput(int stdinFd) {
-    std::string input;
-    std::getline(std::cin, input);
+// Handle server input (stdin)
+void* handleServerInput(int fd) {
+    char buffer[BUFSIZE];
+    int valread = read(STDIN_FILENO, buffer, BUFSIZE - 1);
     
-    if (input == "exit" || input == "quit") {
-        std::cout << "Server shutdown requested..." << std::endl;
-        signalHandler(SIGTERM);
-    } else if (input == "status") {
-        reactor* r = static_cast<reactor*>(globalReactor);
-        std::cout << "=== Server Status ===" << std::endl;
-        std::cout << "Reactor running: " << (r->isRunning() ? "Yes" : "No") << std::endl;
-        std::cout << "Active connections: " << (r->getActiveFdCount() - 2) << std::endl; // -2 for server socket and stdin
-        std::cout << "Graph points: " << globalGraph.size() << std::endl;
-        std::cout << "Expected points: " << counter << std::endl;
-    } else if (input == "graph") {
-        std::cout << "=== Current Graph ===" << std::endl;
-        if (globalGraph.empty()) {
-            std::cout << "Graph is empty" << std::endl;
-        } else {
-            for (size_t i = 0; i < globalGraph.size(); ++i) {
-                std::cout << "Point " << i << ": (" << globalGraph[i].x << ", " << globalGraph[i].y << ")" << std::endl;
-            }
-            
-            // Calculate and show convex hull
-            std::vector<Point> hull = convexHull(globalGraph);
-            double area = polygonArea(hull);
-            std::cout << "Convex Hull Area: " << std::fixed << std::setprecision(1) << area << std::endl;
+    if (valread > 0) {
+        buffer[valread] = '\0';
+        std::string input(buffer);
+        
+        // Remove newline if present
+        if (!input.empty() && input.back() == '\n') {
+            input.pop_back();
         }
-    } else if (input == "help") {
-        std::cout << "=== Server Commands ===" << std::endl;
-        std::cout << "  status - Show server status" << std::endl;
-        std::cout << "  graph  - Show current graph and convex hull" << std::endl;
-        std::cout << "  help   - Show this help message" << std::endl;
-        std::cout << "  exit   - Shutdown server" << std::endl;
-    } else if (!input.empty()) {
-        std::cout << "Unknown command: '" << input << "' (type 'help' for available commands)" << std::endl;
+        if (!input.empty() && input.back() == '\r') {
+            input.pop_back();
+        }
+        
+        if (input == "exit") {
+            std::cout << "Shutting down server..." << std::endl;
+            
+            // Close all client sockets
+            for (auto& pair : clientSockets) {
+                globalReactor->removeFd(pair.first);
+                close(pair.first);
+            }
+            clientSockets.clear();
+            
+            // Stop reactor
+            globalReactor->stop();
+            
+            // Close server socket
+            close(serverSocket);
+            
+            exit(0);
+        } else if (input == "status") {
+            std::cout << "Server status:" << std::endl;
+            std::cout << "  Connected clients: " << clientSockets.size() << std::endl;
+            std::cout << "  Graph points: " << globalGraph.size() << std::endl;
+            std::cout << "  Pending points: " << counter << std::endl;
+        }
     }
-    
-    std::cout << "> " << std::flush;
     
     return nullptr;
 }
 
 int main() {
-    // Setup signal handlers
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
-    
-    std::cout << "=== Convex Hull Server with Reactor Pattern ===" << std::endl;
-    std::cout << "Starting server on port " << PORT << "..." << std::endl;
-    
+    struct sockaddr_in serverAddr;
+    globalReactor = new reactor();
+
     // Create server socket
-    globalServerSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (globalServerSocket < 0) {
+    if ((serverSocket = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         perror("Socket creation failed");
-        return -1;
+        exit(EXIT_FAILURE);
     }
     
     // Set socket options to reuse address
     int opt = 1;
-    if (setsockopt(globalServerSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt)) < 0) {
         perror("setsockopt failed");
-        close(globalServerSocket);
-        return -1;
+        exit(EXIT_FAILURE);
     }
     
     // Configure server address
-    struct sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(PORT);
     
     // Bind socket to address
-    if (bind(globalServerSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+    if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
         perror("Bind failed");
-        close(globalServerSocket);
-        return -1;
+        exit(EXIT_FAILURE);
     }
     
     // Start listening for connections
-    if (listen(globalServerSocket, MAXCLIENTS) < 0) {
+    if (listen(serverSocket, 10) < 0) {
         perror("Listen failed");
-        close(globalServerSocket);
-        return -1;
+        exit(EXIT_FAILURE);
     }
     
-    std::cout << "Socket created and bound successfully" << std::endl;
+    std::cout << "Reactor-based Convex Hull Server listening on port " << PORT << std::endl;
+    std::cout << "Available commands: Newgraph <n>, <x,y>, CH, Newpoint <x,y>, Removepoint <x,y>, Status" << std::endl;
+    std::cout << "Server commands: 'exit' to shutdown, 'status' for server info" << std::endl;
     
-    // Start the reactor
-    globalReactor = startReactor();
-    if (!globalReactor) {
-        std::cout << "Failed to start reactor" << std::endl;
-        close(globalServerSocket);
-        return -1;
+    if (!globalReactor->start()) {
+        std::cerr << "Failed to start reactor" << std::endl;
+        close(serverSocket);
+        exit(EXIT_FAILURE);
+    }
+
+    // Add server socket to reactor
+    if (globalReactor->addFd(serverSocket, handleNewConnection) != 0) {
+        std::cerr << "Failed to add server socket to reactor" << std::endl;
+        globalReactor->stop();
+        delete globalReactor;
+        close(serverSocket);
+        exit(EXIT_FAILURE);
+    }
+    
+    // Add stdin to reactor
+    if (globalReactor->addFd(STDIN_FILENO, handleServerInput) != 0) {
+        std::cerr << "Failed to add stdin to reactor" << std::endl;
+        globalReactor->stop();
+        delete globalReactor;
+        close(serverSocket);
+        exit(EXIT_FAILURE);
     }
     
     std::cout << "Reactor started successfully" << std::endl;
     
-    // Add server socket to reactor
-    if (addFdToReactor(globalReactor, globalServerSocket, handleServerSocket) != 0) {
-        std::cout << "Failed to add server socket to reactor" << std::endl;
-        stopReactor(globalReactor);
-        close(globalServerSocket);
-        return -1;
+    // Main event loop - single-threaded
+    while (globalReactor->isRunning()) {
+        globalReactor->runOnce();
     }
     
-    // Add stdin to reactor for server commands
-    if (addFdToReactor(globalReactor, STDIN_FILENO, handleServerInput) != 0) {
-        std::cout << "Failed to add stdin to reactor" << std::endl;
-        stopReactor(globalReactor);
-        close(globalServerSocket);
-        return -1;
-    }
-    
-    std::cout << "=== Server Started Successfully ===" << std::endl;
-    std::cout << "Listening on port " << PORT << std::endl;
-    std::cout << "Available client commands: Newgraph <n>, <x,y>, CH, Newpoint <x,y>, Removepoint <x,y>, Status" << std::endl;
-    std::cout << "Server commands: status, graph, help, exit" << std::endl;
-    std::cout << "> " << std::flush;
-    
-    // Keep main thread alive while reactor runs
-    reactor* r = static_cast<reactor*>(globalReactor);
-    while (r && r->isRunning()) {
-        sleep(1);
-    }
-    
-    // Cleanup (this will be reached after signalHandler is called)
-    std::cout << "Cleaning up resources..." << std::endl;
-    
-    if (globalServerSocket != -1) {
-        close(globalServerSocket);
-    }
-    
-    std::cout << "Server shutdown complete." << std::endl;
-    
+    delete globalReactor;
     return 0;
 }

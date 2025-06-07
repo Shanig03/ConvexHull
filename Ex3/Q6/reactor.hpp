@@ -131,6 +131,54 @@ public:
     bool isRunning() const {
         return running.load();
     }
+
+    bool runOnce() {
+        if (!running.load()) {
+            return false;
+        }
+
+        fd_set readfds;
+        struct timeval tv;
+        
+        // Initialize file descriptor set
+        FD_ZERO(&readfds);
+        maxFd = 0;
+        
+        // Add all active file descriptors to the set
+        for (const auto& fd : activeFds) {
+            FD_SET(fd, &readfds);
+            if (fd > maxFd) {
+                maxFd = fd;
+            }
+        }
+        
+        // Set timeout
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        
+        // Wait for activity on file descriptors
+        int activity = select(maxFd + 1, &readfds, NULL, NULL, &tv);
+        
+        if (activity < 0) {
+            if (running.load()) {
+                perror("select error in reactor");
+            }
+            return false;
+        }
+        
+        // Check each file descriptor for activity
+        for (const auto& fd : activeFds) {
+            if (FD_ISSET(fd, &readfds)) {
+                // Call the associated function
+                auto it = fdFunctions.find(fd);
+                if (it != fdFunctions.end() && it->second != nullptr) {
+                    it->second(fd);
+                }
+            }
+        }
+        
+        return true;
+    }
 };
 
 // C-style interface functions as specified in the requirements
@@ -178,5 +226,9 @@ int stopReactor(void* reactorPtr) {
     delete r;
     return success ? 0 : -1;
 }
+
+
+
+
 
 #endif // REACTOR_HPP
