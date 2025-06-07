@@ -17,11 +17,11 @@ typedef void* (*reactorFunc)(int fd);
 template<typename FdType = int>
 class Reactor {
 private:
-    std::map<FdType, reactorFunc> fdFunctions;  // Maps fd to its callback function
-    std::set<FdType> activeFds;                 // Set of active file descriptors
-    std::atomic<bool> running;                  // Reactor running state
-    std::thread reactorThread;                  // Thread for reactor loop
-    int maxFd;                                  // Maximum file descriptor value
+    std::map<FdType, reactorFunc> fdFunctions; // Maps fd to its callback function
+    std::set<FdType> activeFds; // Set of active file descriptors
+    std::atomic<bool> running;  // Reactor running state
+    std::thread reactorThread;  // Thread for reactor loop
+    int maxFd; // Maximum file descriptor value
 
     // Main reactor loop
     void reactorLoop() {

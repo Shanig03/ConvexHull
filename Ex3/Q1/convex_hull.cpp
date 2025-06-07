@@ -20,7 +20,7 @@ double crossProduct(const Point& O, const Point& A, const Point& B) {
 
 // Calculate convex hull using Andrew's monotone chain algorithm
 std::vector<Point> convexHull(std::vector<Point> points) {
-    int n = points.size();
+    size_t n = points.size();
     if (n <= 1) return points;
     
     // Sort points lexicographically
@@ -28,8 +28,8 @@ std::vector<Point> convexHull(std::vector<Point> points) {
     
     // Build lower hull
     std::vector<Point> hull;
-    for (int i = 0; i < n; i++) {
-        while (hull.size() >= 2 && 
+    for (size_t i = 0; i < n; i++) {
+        while (hull.size() >= 2 &&
                crossProduct(hull[hull.size()-2], hull[hull.size()-1], points[i]) <= 0) {
             hull.pop_back();
         }
@@ -37,9 +37,9 @@ std::vector<Point> convexHull(std::vector<Point> points) {
     }
     
     // Build upper hull
-    int t = hull.size() + 1;
-    for (int i = n - 2; i >= 0; i--) {
-        while (hull.size() >= t && 
+    size_t t = hull.size() + 1;
+    for (int i = static_cast<int>(n) - 2; i >= 0; i--) {
+        while (hull.size() >= t &&
                crossProduct(hull[hull.size()-2], hull[hull.size()-1], points[i]) <= 0) {
             hull.pop_back();
         }
@@ -54,12 +54,12 @@ std::vector<Point> convexHull(std::vector<Point> points) {
 
 // Calculate area of polygon using shoelace formula
 double polygonArea(const std::vector<Point>& vertices) {
-    int n = vertices.size();
+    size_t n = vertices.size();
     if (n < 3) return 0.0;
     
     double area = 0.0;
-    for (int i = 0; i < n; i++) {
-        int j = (i + 1) % n;
+    for (size_t i = 0; i < n; i++) {
+        size_t j = (i + 1) % n;
         area += vertices[i].x * vertices[j].y;
         area -= vertices[j].x * vertices[i].y;
     }

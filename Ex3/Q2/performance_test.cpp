@@ -23,14 +23,14 @@ double crossProduct(const Point& O, const Point& A, const Point& B) {
 
 // Vector-based convex hull implementation
 std::vector<Point> convexHullVector(std::vector<Point> points) {
-    int n = points.size();
+    size_t n = points.size();
     if (n <= 1) return points;
     
     std::sort(points.begin(), points.end());
     
     // Build lower hull using vector
     std::vector<Point> hull;
-    for (int i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
         while (hull.size() >= 2 && 
                crossProduct(hull[hull.size()-2], hull[hull.size()-1], points[i]) <= 0) {
             hull.pop_back();
@@ -39,8 +39,8 @@ std::vector<Point> convexHullVector(std::vector<Point> points) {
     }
     
     // Build upper hull
-    int t = hull.size() + 1;
-    for (int i = n - 2; i >= 0; i--) {
+    size_t t = hull.size() + 1;
+    for (int i = static_cast<int>(n) - 2; i >= 0; i--) {  
         while (hull.size() >= t && 
                crossProduct(hull[hull.size()-2], hull[hull.size()-1], points[i]) <= 0) {
             hull.pop_back();
@@ -54,7 +54,7 @@ std::vector<Point> convexHullVector(std::vector<Point> points) {
 
 // Deque-based convex hull implementation
 std::deque<Point> convexHullDeque(std::vector<Point> points) {
-    int n = points.size();
+    size_t n = points.size();
     if (n <= 1) {
         std::deque<Point> result;
         for (const auto& p : points) result.push_back(p);
@@ -65,7 +65,7 @@ std::deque<Point> convexHullDeque(std::vector<Point> points) {
     
     // Build lower hull using deque
     std::deque<Point> hull;
-    for (int i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
         while (hull.size() >= 2 && 
                crossProduct(hull[hull.size()-2], hull[hull.size()-1], points[i]) <= 0) {
             hull.pop_back();
@@ -74,8 +74,8 @@ std::deque<Point> convexHullDeque(std::vector<Point> points) {
     }
     
     // Build upper hull
-    int t = hull.size() + 1;
-    for (int i = n - 2; i >= 0; i--) {
+    size_t t = hull.size() + 1;
+    for (int i = static_cast<int>(n) - 2; i >= 0; i--) { 
         while (hull.size() >= t && 
                crossProduct(hull[hull.size()-2], hull[hull.size()-1], points[i]) <= 0) {
             hull.pop_back();
