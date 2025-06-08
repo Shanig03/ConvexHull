@@ -1,44 +1,35 @@
-# Makefile for Reactor Template Library
-
-CXX = clang++
-CXXFLAGS = -std=c++11 -Wall -Wextra -O2 -pthread
+CXX = g++
+CXXFLAGS = -std=c++11 -Wall -Wextra -O
 INCLUDES = -I.
 
-# Target executables
-TARGETS = reactor_server reactor_test
+# Target executable
+TARGET = reactor_test
 
 # Source files
-REACTOR_SERVER_SOURCES = reactor_example.cpp
-REACTOR_TEST_SOURCES = test_reactor.cpp
+SOURCES = reactor.cpp test_reactor.cpp
+
+# Object files
+OBJECTS = $(SOURCES:.cpp=.o)
 
 # Header files
 HEADERS = reactor.hpp
 
-.PHONY: all clean test
+.PHONY: all clean run
 
-all: $(TARGETS)
+all: $(TARGET)
 
-# Build reactor server example
-reactor_server: $(REACTOR_SERVER_SOURCES) $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(REACTOR_SERVER_SOURCES)
+# Build reactor test executable
+$(TARGET): $(OBJECTS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^
 
-# Build reactor test program
-reactor_test: $(REACTOR_TEST_SOURCES) $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(REACTOR_TEST_SOURCES)
+# Compile source files
+%.o: %.cpp $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-# Run tests
-test: reactor_test
-	./reactor_test
+# Run the tests
+run: $(TARGET)
+	./$(TARGET)
 
 # Clean build artifacts
 clean:
-	rm -f $(TARGETS) *.o *~
-
-# Install (copy headers to system include directory)
-install: $(HEADERS)
-	sudo cp $(HEADERS) /usr/local/include/
-
-# Uninstall
-uninstall:
-	sudo rm -f /usr/local/include/reactor.hpp
-
+	rm -f $(TARGET) $(OBJECTS) *~
