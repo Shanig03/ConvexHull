@@ -1,6 +1,9 @@
 #ifndef REACTOR_HPP
 #define REACTOR_HPP
 
+#include <pthread.h> 
+
+// Reactor API
 // Function pointer type definition
 typedef void* (*reactorFunc)(int fd);
 
@@ -18,5 +21,17 @@ int stopReactor(void* reactor);
 
 // Run one iteration of the reactor event loop
 int runReactorOnce(void* reactor);
+
+
+
+// Proactor additions
+typedef void* (*proactorFunc)(int sockfd);
+
+// Starts new proactor and returns proactor thread id
+pthread_t startProactor(int sockfd, proactorFunc threadFunc);
+
+// Stops proactor by thread id
+int stopProactor(pthread_t tid);
+
 
 #endif

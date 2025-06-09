@@ -139,13 +139,19 @@ int main() {
     
     std::cout << "\n=== PERFORMANCE COMPARISON ===" << std::endl;
     
+    int repeat = 10000; // Number of repetitions for performance test (for the gprof)
+    
     // Test Vector Implementation
+    std::vector<Point> hullVector;
+    double areaVector = 0.0;
     auto start = std::chrono::high_resolution_clock::now();
-    std::vector<Point> hullVector = convexHullVector(points);
-    double areaVector = polygonAreaVector(hullVector);
+    for (int i = 0; i < repeat; ++i) {
+        hullVector = convexHullVector(points);
+        areaVector = polygonAreaVector(hullVector);
+    }
     auto end = std::chrono::high_resolution_clock::now();
     auto durationVector = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    
+
     std::cout << "\nVECTOR IMPLEMENTATION:" << std::endl;
     std::cout << "Hull points: " << hullVector.size() << std::endl;
     std::cout << "Convex hull points: ";
@@ -157,12 +163,16 @@ int main() {
     std::cout << "Execution time: " << durationVector.count() << " microseconds" << std::endl;
     
     // Test Deque Implementation
+    std::deque<Point> hullDeque;
+    double areaDeque = 0.0;
     start = std::chrono::high_resolution_clock::now();
-    std::deque<Point> hullDeque = convexHullDeque(points);
-    double areaDeque = polygonAreaDeque(hullDeque);
+    for (int i = 0; i < repeat; ++i) {
+        hullDeque = convexHullDeque(points);
+        areaDeque = polygonAreaDeque(hullDeque);
+    }
     end = std::chrono::high_resolution_clock::now();
     auto durationDeque = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    
+
     std::cout << "\nDEQUE IMPLEMENTATION:" << std::endl;
     std::cout << "Hull points: " << hullDeque.size() << std::endl;
     std::cout << "Convex hull points: ";

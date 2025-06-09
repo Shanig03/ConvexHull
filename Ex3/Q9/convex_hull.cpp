@@ -1,5 +1,5 @@
-#include "reactor.hpp"
 #include "convex_hull.hpp"
+#include "reactor_proactor.hpp"
 #include <iostream>
 #include <vector>
 #include <string>
@@ -12,22 +12,20 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <cstring>
-#include <fcntl.h>
-#include <map>
-
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <csignal>
 
 #define PORT 9034
-#define MAXCLIENTS 10
 #define BUFSIZE 1024
-
-// Reactor globals
-void* globalReactor = nullptr;
-std::map<int, bool> clientSockets;
-int serverSocket = -1;
 
 // Global graph data structure shared by all clients
 std::vector<Point> globalGraph;
 int counter = 0;
+std::mutex graphMutex; // Mutex to protect shared graph resource
+std::atomic<bool> serverRunning{true};
+int globalServerSocket = -1;
 
 Point::Point(double x, double y) : x(x), y(y) {}
 
@@ -43,6 +41,18 @@ bool Point::operator==(const Point& other) const {
 // Cross product of vectors OA and OB
 double crossProduct(const Point& O, const Point& A, const Point& B) {
     return (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x);
+}
+
+// Signal handler for graceful shutdown
+void signalHandler(int signum) {
+    if (signum == SIGINT) {
+        std::cout << "\nShutdown requested..." << std::endl;
+        serverRunning = false;
+        if (globalServerSocket != -1) {
+            close(globalServerSocket);
+        }
+        exit(0);
+    }
 }
 
 // Calculate convex hull using Andrew's monotone chain algorithm
@@ -121,6 +131,13 @@ std::string processCommand(const std::string& command) {
         int n;
         iss >> n;
         
+        // Lock mutex to protect shared graph
+        std::lock_guard<std::mutex> lock(graphMutex);
+
+        if (iss.fail()) {
+            return "Please specify a valid number of points.";
+        }
+        
         // Clear the global graph and prepare for new points
         globalGraph.clear();
         globalGraph.reserve(n);
@@ -132,6 +149,9 @@ std::string processCommand(const std::string& command) {
         return "Ready for " + std::to_string(n) + " points. Send points one by one.";
         
     } else if (cmd == "CH") {
+        // Lock mutex to protect shared graph during algorithm execution
+        std::lock_guard<std::mutex> lock(graphMutex);
+        
         // Calculate and return convex hull area
         std::vector<Point> hull = convexHull(globalGraph);
         double area = polygonArea(hull);
@@ -145,6 +165,9 @@ std::string processCommand(const std::string& command) {
         std::string pointStr;
         iss >> pointStr;
         Point newPoint = parsePoint(pointStr);
+        
+        // Lock mutex to protect shared graph
+        std::lock_guard<std::mutex> lock(graphMutex);
         globalGraph.push_back(newPoint);
         
         return "New point added: (" + std::to_string(newPoint.x) + "," + std::to_string(newPoint.y) + ")";
@@ -154,6 +177,9 @@ std::string processCommand(const std::string& command) {
         std::string pointStr;
         iss >> pointStr;
         Point pointToRemove = parsePoint(pointStr);
+        
+        // Lock mutex to protect shared graph
+        std::lock_guard<std::mutex> lock(graphMutex);
         
         // Find and remove the point
         auto it = std::find(globalGraph.begin(), globalGraph.end(), pointToRemove);
@@ -165,10 +191,16 @@ std::string processCommand(const std::string& command) {
         }
         
     } else if (cmd == "Status") {
+        // Lock mutex to protect shared graph
+        std::lock_guard<std::mutex> lock(graphMutex);
+        
         // Return current graph status
         return "Current graph has " + std::to_string(globalGraph.size()) + " points";
         
     } else {
+        // Lock mutex to protect counter and graph access
+        std::lock_guard<std::mutex> lock(graphMutex);
+        
         if (counter > 0){        
             try {
                 Point newPoint = parsePoint(command);
@@ -185,62 +217,51 @@ std::string processCommand(const std::string& command) {
     }
 }
 
-void* handleClientData(int clientSocket) {
+// Handle client connection in a separate thread
+void* handleClient(int clientSocket) {
     char buffer[BUFSIZE];
-    int valread = read(clientSocket, buffer, BUFSIZE - 1);
-
-    if (valread <= 0) {
-        // Client disconnected
-        removeFdFromReactor(globalReactor, clientSocket);
-        clientSockets.erase(clientSocket);
-        close(clientSocket);
-        return nullptr;
-    }
-
-    buffer[valread] = '\0';
-    std::string command(buffer);
-    if (!command.empty() && command.back() == '\n') command.pop_back();
-    if (!command.empty() && command.back() == '\r') command.pop_back();
-
-    std::cout << "Received command: " << command << std::endl;
-    std::string response = processCommand(command);
-    sendToClient(clientSocket, response);
-    std::cout << "Sent response: " << response << std::endl;
-    return nullptr;
-}
-
-void* handleNewConnection(int fd) {
+    int valread;
     struct sockaddr_in clientAddr;
-    socklen_t clientLen = sizeof(clientAddr);
-    int newSocket = accept(fd, (struct sockaddr*)&clientAddr, &clientLen);
-    if (newSocket < 0) return nullptr;
+    socklen_t addrLen = sizeof(clientAddr);
+    getpeername(clientSocket, (struct sockaddr*)&clientAddr, &addrLen);
 
-    std::cout << "New connection from " << inet_ntoa(clientAddr.sin_addr)
+    std::cout << "Client handler thread started for " << inet_ntoa(clientAddr.sin_addr) 
               << ":" << ntohs(clientAddr.sin_port) << std::endl;
 
-    sendToClient(newSocket, "Commands: Newgraph <n>, <x,y>, CH, Newpoint <x,y>, Removepoint <x,y>, Status");
-    addFdToReactor(globalReactor, newSocket, handleClientData);
-    clientSockets[newSocket] = true;
-    return nullptr;
-}
-
-void* handleServerInput(int) {
-    std::string input;
-    std::getline(std::cin, input);
-
-    if (input == "exit") {
-        std::cout << "Shutting down server..." << std::endl;
-        for (auto& pair : clientSockets) {
-            close(pair.first);
+    sendToClient(clientSocket, "Commands: Newgraph <n>, <x,y>, CH, Newpoint <x,y>, Removepoint <x,y>, Status");
+    
+    while (true) {
+        valread = read(clientSocket, buffer, BUFSIZE - 1);
+        if (valread <= 0) {
+            std::cout << "Client disconnected: " << inet_ntoa(clientAddr.sin_addr) 
+                      << ":" << ntohs(clientAddr.sin_port) << std::endl;
+            break;
         }
-        stopReactor(globalReactor);
-        close(serverSocket);
-        exit(0);
+        buffer[valread] = '\0';
+        std::string command(buffer);
+        if (!command.empty() && command.back() == '\n') command.pop_back();
+        if (!command.empty() && command.back() == '\r') command.pop_back();
+
+        std::cout << "Received command from " << inet_ntoa(clientAddr.sin_addr) 
+                  << ": " << command << std::endl;
+
+        std::string response = processCommand(command);
+        sendToClient(clientSocket, response);
+
+        std::cout << "Sent response to " << inet_ntoa(clientAddr.sin_addr) 
+                  << ": " << response << std::endl;
     }
+    close(clientSocket);
+    std::cout << "Client handler thread ending for " << inet_ntoa(clientAddr.sin_addr) 
+              << ":" << ntohs(clientAddr.sin_port) << std::endl;
     return nullptr;
 }
+
 
 int main() {
+    signal(SIGINT, signalHandler); // Handle Ctrl+C for graceful shutdown
+    
+    int serverSocket;
     struct sockaddr_in serverAddr;
 
     // Create server socket
@@ -255,6 +276,8 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
+    globalServerSocket = serverSocket;
+
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(PORT);
@@ -263,26 +286,26 @@ int main() {
         perror("Bind failed");
         exit(EXIT_FAILURE);
     }
-
-    if (listen(serverSocket, MAXCLIENTS) < 0) {
+    
+    // Start listening for connections
+    if (listen(serverSocket, 10) < 0) {
         perror("Listen failed");
         exit(EXIT_FAILURE);
     }
 
     std::cout << "Convex Hull Server listening on port " << PORT << std::endl;
-    std::cout << "Available commands: Newgraph <n>, <x,y>, CH, Newpoint <x,y>, Removepoint <x,y>, Status or 'exit'" << std::endl;
+    std::cout << "Available commands: Newgraph <n>, <x,y>, CH, Newpoint <x,y>, Removepoint <x,y>, Status" << std::endl;
+    std::cout << "Server will create a new thread for each client connection (proactor)." << std::endl;
 
-    // Start reactor
-    globalReactor = startReactor();
-    addFdToReactor(globalReactor, serverSocket, handleNewConnection);
-    addFdToReactor(globalReactor, STDIN_FILENO, handleServerInput);
+    // --- PROACTOR: Start proactor instead of manual accept/thread loop ---
+    pthread_t proactor_tid = startProactor(serverSocket, handleClient);
 
-    // Main event loop
-    while (true) {
-        if (runReactorOnce(globalReactor) != 0)
-            break;
-    }
+    // Wait for signal or server termination
+    pause();
 
+    // Cleanup (optional, since signal handler exits)
     close(serverSocket);
+    stopProactor(proactor_tid);
+
     return 0;
 }

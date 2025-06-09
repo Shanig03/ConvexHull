@@ -5,7 +5,8 @@
 #include <string>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <map>
+#include <mutex>
+#include "reactor_proactor.hpp"
 
 #define PORT 9034
 #define MAXCLIENTS 10
@@ -22,10 +23,6 @@ struct Point {
     bool operator==(const Point& other) const;
 };
 
-extern void* globalReactor;
-extern std::map<int, bool> clientSockets;
-extern int serverSocket;
-
 // Function declarations
 double crossProduct(const Point& O, const Point& A, const Point& B);
 
@@ -39,13 +36,13 @@ void sendToClient(int clientSocket, const std::string& message);
 
 std::string processCommand(const std::string& command);
 
-void* handleClientData(int clientSocket);
+void* handleClient(int clientSocket);
 
-void* handleNewConnection(int fd);
-
-void* handleServerInput(int fd);
-
-// Global variable declaration
+// Global variables
 extern std::vector<Point> globalGraph;
+
+extern int counter;
+
+extern std::mutex graphMutex;
 
 #endif // CONVEX_HULL_HPP
