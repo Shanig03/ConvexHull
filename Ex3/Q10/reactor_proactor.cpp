@@ -93,6 +93,7 @@ int runReactorOnce(void* reactor) {
 
 // Proactor additions
 
+// Proactor structure to hold arguments for the proactor thread
 struct proactorArgs {
     int sockfd;
     proactorFunc threadFunc;
@@ -107,6 +108,7 @@ static void* proactorThreadWrapper(void* arg) {
     return globalProactorFunc(clientfd);
 }
 
+// Start the proactor main loop in a separate thread
 static void* proactorMain(void* arg) {
     proactorArgs* args = static_cast<proactorArgs*>(arg);
     int listenfd = args->sockfd;
@@ -135,6 +137,7 @@ static void* proactorMain(void* arg) {
     return nullptr;
 }
 
+// Start the proactor thread
 pthread_t startProactor(int sockfd, proactorFunc threadFunc) {
     pthread_t tid;
     proactorArgs* args = new proactorArgs{sockfd, threadFunc, true};
@@ -146,8 +149,7 @@ pthread_t startProactor(int sockfd, proactorFunc threadFunc) {
     return tid;
 }
 
+// Stop the proactor thread
 int stopProactor(pthread_t tid) {
-    // This is a cooperative stop: you must set running=false in your args if you want to stop gracefully.
-    // Here, we use pthread_cancel for simplicity, but you may want to implement a better stop mechanism.
     return pthread_cancel(tid);
 }

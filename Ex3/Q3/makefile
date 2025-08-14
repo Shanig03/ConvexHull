@@ -1,6 +1,6 @@
 CXX = clang++
 CXXFLAGS = -std=c++11 -Wall -Wextra -O2
-INCLUDES = -I.
+INCLUDES = -I. # Include current directory for headers
 
 # Target executable
 TARGET = convex_hull

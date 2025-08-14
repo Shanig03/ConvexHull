@@ -27,3 +27,12 @@ run-server: convex_hull_server
 
 run-client: convex_hull_client
 	./convex_hull_client
+
+
+# The following lines are for building a static library
+
+#libreactor.a: reactor.cpp reactor.hpp
+#	$(CXX) $(CXXFLAGS) -c reactor.cpp && ar rcs libreactor.a reactor.o
+
+#convex_hull_server: convex_hull.cpp libreactor.a
+#	$(CXX) $(CXXFLAGS) -o convex_hull_server convex_hull.cpp libreactor.a

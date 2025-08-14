@@ -30,8 +30,10 @@ double polygonArea(const std::vector<Point>& vertices);
 
 Point parsePoint(const std::string& pointStr);
 
+// Sends a message to a specific client
 void sendToClient(int clientSocket, const std::string& message);
 
+// Processes a command from a client and returns the response
 std::string processCommand(const std::string& command);
 
 // Global variable declaration

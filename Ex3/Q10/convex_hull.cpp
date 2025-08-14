@@ -24,7 +24,7 @@
 std::vector<Point> globalGraph;
 int counter = 0;
 std::mutex graphMutex; // Mutex to protect shared graph resource
-std::atomic<bool> serverRunning{true};
+std::atomic<bool> serverRunning{true}; 
 int globalServerSocket = -1;
 
 // For the CH area watcher thread
@@ -163,7 +163,6 @@ std::string processCommand(const std::string& command) {
         std::vector<Point> hull = convexHull(globalGraph);
         double area = polygonArea(hull);
         
-        // Added {} to "free" the mutex before notifying the watcher thread
         {
             std::lock_guard<std::mutex> lock(chAreaMutex);
             lastCHArea = area;
@@ -332,7 +331,7 @@ int main() {
     // Start watcher thread to monitor CH area
     pthread_create(&watcherThread, nullptr, chAreaWatcherThread, nullptr);
 
-    // --- PROACTOR: Start proactor instead of manual accept/thread loop ---
+    // PROACTOR: Start proactor instead of manual accept/thread loop
     pthread_t proactor_tid = startProactor(serverSocket, handleClient);
 
     while (serverRunning) {

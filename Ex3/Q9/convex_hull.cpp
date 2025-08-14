@@ -270,13 +270,14 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
+    // Set socket options to allow reuse of address
     int opt = 1;
     if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt)) < 0) {
         perror("setsockopt failed");
         exit(EXIT_FAILURE);
     }
 
-    globalServerSocket = serverSocket;
+    globalServerSocket = serverSocket; // Store global server socket for cleanup
 
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
@@ -297,13 +298,13 @@ int main() {
     std::cout << "Available commands: Newgraph <n>, <x,y>, CH, Newpoint <x,y>, Removepoint <x,y>, Status" << std::endl;
     std::cout << "Server will create a new thread for each client connection (proactor)." << std::endl;
 
-    // --- PROACTOR: Start proactor instead of manual accept/thread loop ---
+    // PROACTOR: Start proactor instead of manual accept/thread loop 
     pthread_t proactor_tid = startProactor(serverSocket, handleClient);
 
     // Wait for signal or server termination
     pause();
 
-    // Cleanup (optional, since signal handler exits)
+    // Cleanup 
     close(serverSocket);
     stopProactor(proactor_tid);
 

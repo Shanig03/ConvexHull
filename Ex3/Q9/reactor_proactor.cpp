@@ -147,7 +147,5 @@ pthread_t startProactor(int sockfd, proactorFunc threadFunc) {
 }
 
 int stopProactor(pthread_t tid) {
-    // This is a cooperative stop: you must set running=false in your args if you want to stop gracefully.
-    // Here, we use pthread_cancel for simplicity, but you may want to implement a better stop mechanism.
     return pthread_cancel(tid);
 }
